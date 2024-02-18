@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -34,7 +35,13 @@ func main() {
 	}
 
 	var allErrorPods []podItem
-	keywords := []string{"error", "fail", "fatal error", "panic", "failed"}
+	keywords := []string{
+		"error", "fail", "fatal error", "panic", "failed", "failure", "exception", "crash", "crashed", "crashing",
+		"unhealthy", "back-off", "OOMKilled", "Evicted", "ImagePullBackOff", "CrashLoopBackOff",
+		"Kill", "Terminated", "MountFailed", "FailedScheduling", "FailedAttachVolume", "FailedMount",
+		"FailedKillPod", "ResourceExhausted", "NetworkUnavailable", "FileSystemResizeFailed",
+		"NodeNotReady", "NodeNotSchedulable", "FailedBinding", "FailedPlacement", "FailedDaemonPod",
+	}
 
 	// Iterate over all namespaces and collect pods with errors
 	namespaces, _ := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
@@ -45,6 +52,7 @@ func main() {
 
 	// Pass the collected pods to the Bubble Tea program
 	m := initialModel()
+	m.clientset = clientset
 	m.pods = allErrorPods         // Assuming you have a field in your model to hold this
 	program := tea.NewProgram(&m) // Pass a pointer to the model
 	finalModel, err := program.Run()
@@ -67,7 +75,6 @@ func searchLogsForErrors(clientset *kubernetes.Clientset, namespace string, keyw
 		req := clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, logOptions)
 		logs, err := req.Stream(context.TODO())
 		if err != nil {
-			// Consider how you want to handle errors; for now, just continue
 			continue
 		}
 		defer logs.Close()
@@ -80,15 +87,68 @@ func searchLogsForErrors(clientset *kubernetes.Clientset, namespace string, keyw
 
 		logContent := buf.String()
 		for _, keyword := range keywords {
-			if strings.Contains(logContent, keyword) {
+			if index := strings.Index(logContent, keyword); index >= 0 {
+				// Capture some context around the keyword
+				contextSize := 200
+				start := max(0, index-contextSize)
+				end := min(len(logContent), index+len(keyword)+contextSize)
+				context := logContent[start:end]
+
 				errorPods = append(errorPods, podItem{
-					Name:      pod.Name,
-					Namespace: namespace,
-					Keyword:   keyword,
+					Name:       pod.Name,
+					Namespace:  namespace,
+					Keyword:    keyword,
+					LogContext: context,
 				})
 				break
 			}
 		}
 	}
 	return errorPods, nil
+}
+
+var keywordHighlightStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#FFF")).
+	Background(lipgloss.Color("#5D3FD3"))
+
+func getLogDetailsForPod(clientset *kubernetes.Clientset, pod podItem) string {
+	// Assuming that logs are fetched in a similar manner to searchLogsForErrors
+	logOptions := &v1.PodLogOptions{}
+	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, logOptions)
+	logs, err := req.Stream(context.TODO())
+	if err != nil {
+		// Handle the error properly; for now, return an error message
+		return fmt.Sprintf("Error fetching logs for pod %s: %v", pod.Name, err)
+	}
+	defer logs.Close()
+
+	buf := new(strings.Builder)
+	_, err = io.Copy(buf, logs)
+	if err != nil {
+		return fmt.Sprintf("Error reading logs for pod %s: %v", pod.Name, err)
+	}
+
+	logContent := buf.String()
+
+	// Highlight the keyword in the log content
+	highlightedKeyword := keywordHighlightStyle.Render(pod.Keyword)
+	highlightedLogContent := strings.ReplaceAll(logContent, pod.Keyword, highlightedKeyword)
+
+	return highlightedLogContent
+}
+
+// Helper functions to safely handle string slicing
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

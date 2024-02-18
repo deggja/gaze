@@ -8,48 +8,44 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"k8s.io/client-go/kubernetes"
 )
 
 // lipgloss styles
 var (
-	appStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Width(50). // Set your desired width
-			Render
-
-	keywordStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Width(40). // Set your desired width
-			Render
-
 	selectedRowStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#5D3FD3")).
-				Render
+				Bold(true).
+				Background(lipgloss.Color("#5D3FD3"))
 
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Background(lipgloss.Color("#333333")).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Render
-
-	tableStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Render
+			Foreground(lipgloss.Color("#FFFFFF"))
 )
 
 type podItem struct {
-	Name      string
-	Namespace string
-	Keyword   string
+	Name       string
+	Namespace  string
+	Keyword    string
+	LogContext string
 }
 
 type model struct {
-	pods        []podItem
-	cursor      int
-	selectedPod podItem
-	progressBar progress.Model
-	loading     bool
+	pods               []podItem
+	cursor             int
+	selectedPod        podItem
+	progressBar        progress.Model
+	loading            bool
+	state              viewState
+	selectedLogContext string
+	clientset          *kubernetes.Clientset
 }
+
+type viewState int
+
+const (
+	viewListing viewState = iota
+	viewLogDetails
+)
 
 type tickMsg time.Time
 
@@ -82,7 +78,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "enter", " ":
-			m.selectedPod = m.pods[m.cursor]
+			if m.state == viewListing {
+				m.state = viewLogDetails
+				m.selectedPod = m.pods[m.cursor]
+				m.selectedLogContext = getLogDetailsForPod(m.clientset, m.selectedPod)
+			}
+		case "r", "R":
+			if m.state == viewLogDetails {
+				m.state = viewListing
+				m.selectedLogContext = ""
+			}
 		}
 
 	case tickMsg:
@@ -108,18 +113,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func renderRow(pod podItem, isSelected bool, appWidth int) string {
-	// Apply the app and keyword styles to the pod name and keyword
-	app := appStyle(pod.Name)
-	keyword := keywordStyle(pod.Keyword)
+func renderRow(pod podItem, isSelected bool, appWidth, keywordWidth int) string {
+	// Create the formatted application name and keyword
+	appFormatted := fmt.Sprintf("%-*s", appWidth, pod.Name)
+	keywordFormatted := fmt.Sprintf("%-*s", keywordWidth, pod.Keyword)
 
-	// If the row is selected, apply the selectedRowStyle
+	// Combine the application name and keyword into one string
+	row := appFormatted + " " + keywordFormatted
+
 	if isSelected {
-		app = selectedRowStyle(app)
-		keyword = selectedRowStyle(keyword)
+		// If the row is selected, apply the selectedRowStyle to the entire row
+		row = selectedRowStyle.Render(row)
 	}
 
-	return fmt.Sprintf("%s %s\n", app, keyword)
+	return row + "\n"
 }
 
 func (m model) View() string {
@@ -128,28 +135,45 @@ func (m model) View() string {
 		return fmt.Sprintf("\nCollecting log data..\n%s\n\nPress 'q' to quit.\n", m.progressBar.View())
 	}
 
-	// Once loading is complete, we render the table
 	var b strings.Builder
-	b.WriteString("Select the pod to inspect (press 'q' to quit):\n\n")
 
-	appWidth := 0
-	for _, pod := range m.pods {
-		if len(pod.Name) > appWidth {
-			appWidth = len(pod.Name)
+	switch m.state {
+	case viewListing:
+		b.WriteString("Select the pod to inspect (press 'q' to quit):\n\n")
+
+		// Calculate the width for the application column
+		appWidth := 0
+		for _, pod := range m.pods {
+			if len(pod.Name) > appWidth {
+				appWidth = len(pod.Name)
+			}
 		}
+		appWidth += 2 // Add some padding
+
+		// Calculate the width for the keyword column
+		keywordWidth := 0
+		for _, pod := range m.pods {
+			if len(pod.Keyword) > keywordWidth {
+				keywordWidth = len(pod.Keyword)
+			}
+		}
+		keywordWidth += 2 // Add some padding
+
+		// Render the headers
+		header := fmt.Sprintf("%-*s %-*s", appWidth, "Application", keywordWidth, "Keyword")
+		b.WriteString(headerStyle.Render(header) + "\n")
+
+		// Iterate over each pod and render the rows
+		for i, pod := range m.pods {
+			b.WriteString(renderRow(pod, m.cursor == i, appWidth, keywordWidth))
+		}
+
+	case viewLogDetails:
+		// Render the detailed log view for the selected pod
+		b.WriteString(fmt.Sprintf("Log details for %s:\n\n%s\n\nPress 'r' to return to the list.\n",
+			m.selectedPod.Name, m.selectedLogContext))
 	}
-	appWidth += 2 // Add some padding
 
-	// Add table headers
-	b.WriteString(headerStyle("Application") + " " + headerStyle("Keyword") + "\n")
-
-	// Iterate over each pod and render the row
-	for i, pod := range m.pods {
-		// Use the renderRow function to format each row
-		b.WriteString(renderRow(pod, m.cursor == i, appWidth))
-	}
-
-	// Return the rendered table
 	return b.String()
 }
 
