@@ -62,6 +62,8 @@ To start the app, simply run the compiled binary:
 ./gaze
 ```
 
+[![asciicast](https://asciinema.org/a/641488.svg)](https://asciinema.org/a/641488)
+
 ## Kubernetes interaction
 
 Gaze will require access to your Kubernetes cluster. Ensure your `kubeconfig` is set up correctly before starting the app. The application currently expects the kubeconfig at its default location.
