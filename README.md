@@ -76,4 +76,4 @@ Gaze uses [bubbletea](https://github.com/charmbracelet/bubbletea).
 
 ## License
 
-Serpent is released under the MIT License. Check out the [LICENSE](https://github.com/deggja/gaze/LICENSE) file for more information.
+Gaze is released under the MIT License. Check out the [LICENSE](https://github.com/deggja/gaze/LICENSE) file for more information.
