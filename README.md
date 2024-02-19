@@ -56,7 +56,7 @@ go build -o gaze
 
 ### Starting the app
 
-To start the game, simply run the compiled binary:
+To start the app, simply run the compiled binary:
 
 ```sh
 ./gaze
@@ -64,7 +64,7 @@ To start the game, simply run the compiled binary:
 
 ## Kubernetes interaction
 
-Gaze will require access to your Kubernetes cluster. Ensure your `kubeconfig` is set up correctly before starting the game. The application currently expects the kubeconfig at its default location.
+Gaze will require access to your Kubernetes cluster. Ensure your `kubeconfig` is set up correctly before starting the app. The application currently expects the kubeconfig at its default location.
 
 ## Contribute 🔨
 
