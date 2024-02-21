@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -47,6 +49,10 @@ const (
 	viewLogDetails
 )
 
+type logCollectionDoneMsg struct {
+	errorPods []podItem
+}
+
 type tickMsg time.Time
 
 func tickEveryHalfSecond() tea.Cmd {
@@ -57,8 +63,34 @@ func tickEveryHalfSecond() tea.Cmd {
 
 func (m model) Init() tea.Cmd {
 	// Start the progress bar immediately
-	m.progressBar.SetPercent(0) // Reset progress to 0
-	return tickEveryHalfSecond()
+	return tea.Batch(
+		m.startLogCollection(keywords),
+		tickEveryHalfSecond(),
+	)
+}
+
+// Sstart the log collection
+func (m model) startLogCollection(keywords []string) tea.Cmd {
+	return func() tea.Msg {
+		ch := make(chan logCollectionDoneMsg)
+
+		go func() {
+			var allErrorPods []podItem
+			// time.Sleep(5 * time.Second) // Simulate log collection delay for now
+			namespaces, _ := m.clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+			for _, ns := range namespaces.Items {
+				errorPods, _ := searchLogsForErrors(m.clientset, ns.Name, keywords)
+				allErrorPods = append(allErrorPods, errorPods...)
+			}
+			ch <- logCollectionDoneMsg{errorPods: allErrorPods}
+			close(ch)
+		}()
+
+		return func() tea.Msg {
+			msg := <-ch
+			return msg
+		}
+	}
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -68,7 +100,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q":
-			return m, tea.Quit // Handle quitting
+			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -96,8 +128,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, tickEveryHalfSecond())
 		}
 
+	case logCollectionDoneMsg:
+		m.pods = msg.errorPods
+		m.loading = false
+		return m, nil
+
 	case progress.FrameMsg:
-		// Update the progress bar model based on the frame message.
 		var cmd tea.Cmd
 		progressModel, cmd := m.progressBar.Update(msg)
 		m.progressBar = progressModel.(progress.Model)

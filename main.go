@@ -19,6 +19,14 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+var keywords = []string{
+	"error", "fail", "fatal error", "panic", "failed", "failure", "exception", "crash", "crashed", "crashing",
+	"unhealthy", "back-off", "OOMKilled", "Evicted", "ImagePullBackOff", "CrashLoopBackOff",
+	"Kill", "Terminated", "MountFailed", "FailedScheduling", "FailedAttachVolume", "FailedMount",
+	"FailedKillPod", "ResourceExhausted", "NetworkUnavailable", "FileSystemResizeFailed",
+	"NodeNotReady", "NodeNotSchedulable", "FailedBinding", "FailedPlacement", "FailedDaemonPod",
+}
+
 func main() {
 	// init k8s
 	kubeconfig := flag.String("kubeconfig", filepath.Join(homedir.HomeDir(), ".kube", "config"), "absolute path to the kubeconfig file")
@@ -35,13 +43,6 @@ func main() {
 	}
 
 	var allErrorPods []podItem
-	keywords := []string{
-		"error", "fail", "fatal error", "panic", "failed", "failure", "exception", "crash", "crashed", "crashing",
-		"unhealthy", "back-off", "OOMKilled", "Evicted", "ImagePullBackOff", "CrashLoopBackOff",
-		"Kill", "Terminated", "MountFailed", "FailedScheduling", "FailedAttachVolume", "FailedMount",
-		"FailedKillPod", "ResourceExhausted", "NetworkUnavailable", "FileSystemResizeFailed",
-		"NodeNotReady", "NodeNotSchedulable", "FailedBinding", "FailedPlacement", "FailedDaemonPod",
-	}
 
 	// Iterate over all namespaces and collect pods with errors
 	namespaces, _ := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
@@ -50,17 +51,17 @@ func main() {
 		allErrorPods = append(allErrorPods, errorPods...)
 	}
 
-	// Pass the collected pods to the Bubble Tea program
+	// Pass the collected pods to bubbletea
 	m := initialModel()
 	m.clientset = clientset
-	m.pods = allErrorPods         // Assuming you have a field in your model to hold this
+	m.pods = allErrorPods
 	program := tea.NewProgram(&m) // Pass a pointer to the model
 	finalModel, err := program.Run()
 	if err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
 	}
-	_ = finalModel.(*model) // Do something with the final model
+	_ = finalModel.(*model) // Do something with the final model?
 }
 
 func searchLogsForErrors(clientset *kubernetes.Clientset, namespace string, keywords []string) ([]podItem, error) {
@@ -88,7 +89,7 @@ func searchLogsForErrors(clientset *kubernetes.Clientset, namespace string, keyw
 		logContent := buf.String()
 		for _, keyword := range keywords {
 			if index := strings.Index(logContent, keyword); index >= 0 {
-				// Capture some context around the keyword
+				// get context around the keyword
 				contextSize := 200
 				start := max(0, index-contextSize)
 				end := min(len(logContent), index+len(keyword)+contextSize)
@@ -113,7 +114,6 @@ var keywordHighlightStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#5D3FD3"))
 
 func getLogDetailsForPod(clientset *kubernetes.Clientset, pod podItem) string {
-	// Assuming that logs are fetched in a similar manner to searchLogsForErrors
 	logOptions := &v1.PodLogOptions{}
 	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, logOptions)
 	logs, err := req.Stream(context.TODO())
